@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+
+# MIT License
+# 
+# Copyright (c) 2019 Samir Aguiar
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+import argparse
+import subprocess
+import sys
+import os
+
+if sys.version_info < (3, 0):
+    print("Python 2 is not supported")
+    sys.exit(1)
+
+CURRENT_SCRIPT=os.path.realpath(__file__)
+EDIT_REV_FILE=".git/GIT_EDIT_REV"
+GIT_CMD=""
+
+def _die(message):
+    print(message)
+    sys.exit(1)
+
+def _die_unless(condition, message):
+    """A replacement for Python's assert that doesn't show a stacktrace"""
+    if not condition:
+        _die(message)
+
+def _git(*args, ignore_errors=False, **kwargs):
+    global GIT_CMD
+
+    _die_unless(len(args) > 0, "Must provide a Git command")
+
+    if not GIT_CMD:
+        # lazy initialize GIT_CMD to the path to git
+        GIT_CMD = subprocess.check_output(["which", "git"]).strip().decode("utf8")
+        _die_unless(os.path.isfile(GIT_CMD), "Git binary not found")
+
+    try:
+        output = subprocess.check_output([GIT_CMD] + list(args), stderr=subprocess.STDOUT, **kwargs)
+        return output.strip().decode("utf8")
+    except subprocess.CalledProcessError as e:
+        if not ignore_errors:
+            print(e.output)
+            sys.exit(e.returncode)
+        else:
+            return None
+
+def _store_edit_rev(rev):
+    if os.path.isfile(EDIT_REV_FILE):
+        os.remove(EDIT_REV_FILE)
+
+    with open(EDIT_REV_FILE, "w") as f:
+        f.write(rev)
+
+def _remove_edit_rev():
+    if os.path.isfile(EDIT_REV_FILE):
+        os.remove(EDIT_REV_FILE)
+
+def _get_edit_rev():
+    _die_unless(
+        os.path.isfile(EDIT_REV_FILE),
+        "file for the revision being edit was not found at %s" % EDIT_REV_FILE)
+
+    with open(EDIT_REV_FILE, "r") as f:
+        rev = f.readline()
+        _assert_valid_rev(rev)
+        return rev
+
+def _assert_rebasing():
+    if not os.path.isdir(_git("rev-parse", "--git-path", "rebase-merge")) and \
+        not os.path.isdir(_git("rev-parse", "--git-path", "rebase-apply")):
+        _die("No rebase in progress, cannot continue")
+
+def _assert_valid_rev(rev):
+    # resolve the current ref into a *short* SHA value if possible
+    sha = _git("rev-parse", "--short", rev, ignore_errors=True)
+    _die_unless(sha is not None, "Invalid revision `%s`" % rev)
+    return sha
+
+def edit_commit(rev, reword_only=False):
+    # assert rev is valid and turn things like HEAD into a short SHA
+    rev = _assert_valid_rev(rev)
+    # need to use the parent of `rev` to include itself
+    parent_rev = _git("log", "--pretty=%P", "-n", "1", rev)
+    # just in case git-log output is different than what we expect
+    parent_rev = _assert_valid_rev(parent_rev)
+
+    if reword_only:
+        editor="sed -i 's/^pick %s/reword %s/'" % (rev, rev)
+    else:
+        editor="sed -i 's/^pick %s/edit %s/'" % (rev, rev)
+
+    # GIT_SEQUENCE_EDITOR allow us to use `sed` to replace
+    # what we want to do with the target reference
+    _git("rebase", "-i", parent_rev, env={"GIT_SEQUENCE_EDITOR": editor})
+    if reword_only:
+        _git("rebase", "--continue")
+    else:
+        # undo `rev` so we can edit it
+        _git("reset", "--soft", "HEAD^")
+        _store_edit_rev(rev)
+        # print the status so the user knows what's going on
+        print(_git("status"))
+
+def commit_original():
+    _assert_rebasing()
+    # if $? != 0, i.e. output == None, there are staged changes
+    staged_changes = _git("diff-index", "--quiet", "--cached", "HEAD", ignore_errors=True) is None
+    rev = _get_edit_rev()
+    # we only need to commit if there is anything to be commited
+    if staged_changes:
+        # commit staged files reusing message from `rev`
+        _git("commit", "-C", rev)
+    else:
+        print("No staged changes to commit. Nothing to do.")
+
+def finish_editing():
+    # finish rebasing
+    _git("rebase", "--continue")
+    # remove stored revision
+    _remove_edit_rev()
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Edit a commit in a Git repository")
+    parser.add_argument("rev", metavar="<revision>", type=str, nargs="?",
+                        help="the revision to edit")
+    # FIXME: requires a tty to work
+    # parser.add_argument("-r", "--reword", dest="rewording", action="store_true",
+    #                     help="amend the revision instead")
+    parser.add_argument("-o", "--commit-original", dest="commiting_original", action="store_true",
+                        help="commit the current staged changes with the message of the revision being edited")
+    parser.add_argument("-c", "--continue", dest="continuing", action="store_true",
+                        help="finish editing the commit")
+    args = parser.parse_args()
+    return args
+
+if __name__ == "__main__":
+    args = parse_args()
+
+    # FIXME: requires a tty to work
+    # if args.rewording and not args.rev:
+    #     _die("[-r|--reword] does not make sense without a revision")
+
+    if args.rev:
+        edit_commit(args.rev)
+    elif args.commiting_original:
+        commit_original()
+    elif args.continuing:
+        finish_editing()
+    else:
+        _die("Need to provide a revision or [-c|--continue] to finish editing")
