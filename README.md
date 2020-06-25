@@ -86,7 +86,7 @@ A -- B1 -- B2 -- C -- D
 - [ ] Fix --reword: need to use a real tty otherwise git complains
 - [ ] Handle merge commits or commits whose parent is a merge commit
 - [ ] Support editing multiple commits
-- [ ] Add an --abort switch
+- [x] Add an --abort switch
 - [ ] Handle root commit
 - [ ] Color git-status output (called just after edit has started)
 - [ ] Print a short summary of the newly created commits (hashes and msg) or some message if they were all removed

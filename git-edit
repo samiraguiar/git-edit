@@ -140,9 +140,12 @@ def commit_original():
     else:
         print("No staged changes to commit. Nothing to do.")
 
-def finish_editing():
-    # finish rebasing
-    _git("rebase", "--continue")
+def finish_editing(abort=False):
+    if abort:
+        _git("rebase", "--abort")
+        print("git-edit aborted")
+    else:
+        _git("rebase", "--continue")
     # remove stored revision
     _remove_edit_rev()
 
@@ -157,6 +160,8 @@ def parse_args():
                         help="commit the current staged changes with the message of the revision being edited")
     parser.add_argument("-c", "--continue", dest="continuing", action="store_true",
                         help="finish editing the commit")
+    parser.add_argument("-a", "--abort", dest="aborting", action="store_true",
+                        help="abort editing")
     args = parser.parse_args()
     return args
 
@@ -173,5 +178,7 @@ if __name__ == "__main__":
         commit_original()
     elif args.continuing:
         finish_editing()
+    elif args.aborting:
+        finish_editing(abort=True)
     else:
         _die("Need to provide a revision or [-c|--continue] to finish editing")
