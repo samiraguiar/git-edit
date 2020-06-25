@@ -32,7 +32,7 @@ if sys.version_info < (3, 0):
     sys.exit(1)
 
 CURRENT_SCRIPT=os.path.realpath(__file__)
-EDIT_REV_FILE=".git/GIT_EDIT_REV"
+EDIT_REV_FILENAME="GIT_EDIT_REV"
 GIT_CMD=""
 
 def _die(message):
@@ -64,23 +64,30 @@ def _git(*args, ignore_errors=False, **kwargs):
         else:
             return None
 
-def _store_edit_rev(rev):
-    if os.path.isfile(EDIT_REV_FILE):
-        os.remove(EDIT_REV_FILE)
+def _get_rev_file():
+    # use "--git-common-dir" to account for worktrees
+    return os.path.join(_git("rev-parse", "--git-common-dir"), EDIT_REV_FILENAME)
 
-    with open(EDIT_REV_FILE, "w") as f:
+def _store_edit_rev(rev):
+    rev_file = _get_rev_file()
+    if os.path.isfile(rev_file):
+        os.remove(rev_file)
+
+    with open(rev_file, "w") as f:
         f.write(rev)
 
 def _remove_edit_rev():
-    if os.path.isfile(EDIT_REV_FILE):
-        os.remove(EDIT_REV_FILE)
+    rev_file = _get_rev_file()
+    if os.path.isfile(rev_file):
+        os.remove(rev_file)
 
 def _get_edit_rev():
+    rev_file = _get_rev_file()
     _die_unless(
-        os.path.isfile(EDIT_REV_FILE),
-        "file for the revision being edit was not found at %s" % EDIT_REV_FILE)
+        os.path.isfile(rev_file),
+        "file for the revision being edit was not found at %s" % rev_file)
 
-    with open(EDIT_REV_FILE, "r") as f:
+    with open(rev_file, "r") as f:
         rev = f.readline()
         _assert_valid_rev(rev)
         return rev
